@@ -71,7 +71,10 @@ services:
     volumes:
       - .:/app # 개발 중 코드 변경 시 자동 반영을 위한 볼륨
       - /app/venv # 가상환경 폴더는 컨테이너에서 독립적으로 관리
-    command: gunicorn app.main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+    # 상용서비스시 사용
+    # command: gunicorn app.main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+    # 개발 중 사용
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - certgo-network
     labels: # Traefik이 이 서비스를 감지하도록 레이블 추가
@@ -80,15 +83,24 @@ services:
       # 단일 서비스 정의: certgo-backend 컨테이너의 8000번 포트를 'certgo-backend-service'로 정의
       - "traefik.http.services.certgo-backend-service.loadbalancer.server.port=8000"
 
-      # 메인 API 라우터 (http://localhost/api 로 접근)
+      # Traefik CORS 미들웨어 정의 (최종 수정!)
+      - "traefik.http.middlewares.cors-middleware.headers.customresponseheaders.Access-Control-Allow-Origin=http://localhost:3000"
+      - "traefik.http.middlewares.cors-middleware.headers.customresponseheaders.Access-Control-Allow-Methods=GET,POST,PUT,DELETE,OPTIONS"
+      - "traefik.http.middlewares.cors-middleware.headers.customresponseheaders.Access-Control-Allow-Headers=Content-Type,Authorization"
+      - "traefik.http.middlewares.cors-middleware.headers.customresponseheaders.Access-Control-Allow-Credentials=true" # 이 줄은 헤더 이름이 Access-Control-Allow-Credentials
+      - "traefik.http.middlewares.cors-middleware.headers.customresponseheaders.Access-Control-Max-Age=86400" # 오타 수정 및 customresponseheaders 아래로 이동
+
+      # 메인 API 라우터에 CORS 미들웨어 적용
       - "traefik.http.routers.backend.rule=Host(`localhost`) && PathPrefix(`/api`)"
       - "traefik.http.routers.backend.entrypoints=web"
-      - "traefik.http.routers.backend.service=certgo-backend-service" # 위에서 정의한 서비스 이름 참조
+      - "traefik.http.routers.backend.service=certgo-backend-service"
+      - "traefik.http.routers.backend.middlewares=cors-middleware"
 
-      # FastAPI 자동 문서화 라우터 (http://localhost/docs, http://localhost/redoc, http://localhost/openapi.json 로 접근)
+      # FastAPI 자동 문서화 라우터에 CORS 미들웨어 적용
       - "traefik.http.routers.backend-docs.rule=Host(`localhost`) && PathPrefix(`/docs`, `/redoc`, `/openapi.json`)"
       - "traefik.http.routers.backend-docs.entrypoints=web"
-      - "traefik.http.routers.backend-docs.service=certgo-backend-service" # 위에서 정의한 서비스 이름 참조
+      - "traefik.http.routers.backend-docs.service=certgo-backend-service"
+      - "traefik.http.routers.backend-docs.middlewares=cors-middleware"
 
 
   # 5. 백엔드 Celery Worker 서비스
