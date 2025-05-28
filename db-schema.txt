@@ -1,0 +1,153 @@
+erDiagram
+    Users ||--o{ UserQuizAttempts : has
+    Users ||--o{ UserSubscriptions : has
+    Users ||--o{ UserLearningProgress : has
+    Users ||--o{ LoginHistory : has
+
+    Certificates ||--o{ LearningContent : has
+    Certificates ||--o{ Quizzes : has_general_quizzes
+    Certificates ||--o{ UserQuizAttempts : related_to
+
+    LearningContent ||--o{ ContentSections : has
+    LearningContent ||--o{ Quizzes : has_content_specific_quizzes
+    LearningContent ||--o{ UserLearningProgress : tracks
+
+    ContentSections ||--o{ Quizzes : related_to_quiz_generation
+
+    Quizzes ||--o{ UserAnswers : is_answered_in
+
+    UserQuizAttempts ||--o{ UserAnswers : records
+
+    SubscriptionPlans ||--o{ UserSubscriptions : offered_to
+
+    Users {
+        UUID id PK
+        VARCHAR email UK
+        VARCHAR password_hash
+        VARCHAR name
+        TEXT bio
+        VARCHAR language
+        VARCHAR theme
+        BOOLEAN email_notifications
+        BOOLEAN push_notifications
+        BOOLEAN marketing_emails
+        BOOLEAN two_factor_auth_enabled
+        TIMESTAMP created_at
+        TIMESTAMP updated_at
+    }
+
+    Certificates {
+        UUID id PK
+        VARCHAR name UK
+        TEXT description
+        INTEGER difficulty_level
+        VARCHAR category
+        BOOLEAN is_premium
+    }
+
+    LearningContent {
+        UUID id PK
+        UUID certificate_id FK
+        VARCHAR type
+        VARCHAR source_url UK
+        VARCHAR title
+        TEXT description
+        TEXT raw_text_content
+        VARCHAR processing_status
+        INTEGER duration_minutes
+        VARCHAR qdrant_collection_name
+        TIMESTAMP created_at
+        TIMESTAMP updated_at
+    }
+
+    ContentSections {
+        UUID id PK
+        UUID content_id FK
+        VARCHAR section_title
+        TEXT section_text
+        VARCHAR start_timestamp
+        VARCHAR end_timestamp
+        INTEGER order_index
+        UUID qdrant_point_id
+    }
+
+    Quizzes {
+        UUID id PK
+        UUID content_id FK
+        UUID certificate_id FK
+        TEXT question_text
+        JSONB options_json
+        VARCHAR correct_answer_id
+        TEXT explanation_text
+        VARCHAR difficulty
+        VARCHAR question_type
+        JSONB related_materials_json
+        BOOLEAN generated_by_ai
+        TIMESTAMP created_at
+    }
+
+    UserQuizAttempts {
+        UUID id PK
+        UUID user_id FK
+        UUID certificate_id FK
+        VARCHAR exam_type
+        TIMESTAMP start_time
+        TIMESTAMP end_time
+        INTEGER time_taken_seconds
+        INTEGER score
+        INTEGER total_questions
+        INTEGER correct_count
+    }
+
+    UserAnswers {
+        UUID id PK
+        UUID attempt_id FK
+        UUID quiz_id FK
+        VARCHAR user_selected_option_id
+        BOOLEAN is_correct
+        BOOLEAN bookmarked
+        TIMESTAMP submitted_at
+    }
+
+    UserLearningProgress {
+        UUID id PK
+        UUID user_id FK
+        UUID content_id FK
+        TIMESTAMP last_viewed_at
+        INTEGER progress_percentage
+        JSONB chat_history_json
+        INTEGER summary_count
+        TIMESTAMP updated_at
+    }
+
+    SubscriptionPlans {
+        UUID id PK
+        VARCHAR name
+        DECIMAL price_per_month
+        JSONB features_json
+        INTEGER fast_test_limit
+        INTEGER slow_test_limit
+        VARCHAR summary_chat_limit_type
+        INTEGER summary_chat_limit_value
+        BOOLEAN is_active
+    }
+
+    UserSubscriptions {
+        UUID id PK
+        UUID user_id FK
+        UUID plan_id FK
+        TIMESTAMP start_date
+        TIMESTAMP end_date
+        VARCHAR status
+        INTEGER credits_remaining
+        TIMESTAMP last_billing_date
+    }
+
+    LoginHistory {
+        UUID id PK
+        UUID user_id FK
+        TIMESTAMP login_time
+        VARCHAR ip_address
+        VARCHAR device_info
+        VARCHAR location
+    }

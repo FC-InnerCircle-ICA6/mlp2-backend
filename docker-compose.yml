@@ -1,0 +1,148 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL 데이터베이스 서비스
+  certgo-db:
+    image: postgres:15-alpine
+    container_name: certgo-db
+    restart: always
+    ports:
+      - "5432:5432" 
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - ./data/db:/var/lib/postgresql/data # 호스트의 ./data/db 폴더에 데이터 저장
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - certgo-network
+
+  # 2. Redis 서비스
+  certgo-redis:
+    image: redis:7-alpine
+    container_name: certgo-redis
+    restart: always
+    volumes:
+      - ./data/redis:/data # 호스트의 ./data/redis 폴더에 데이터 저장
+    networks:
+      - certgo-network
+
+  # 3. Qdrant 벡터 데이터베이스 서비스
+  certgo-qdrant:
+    image: qdrant/qdrant:latest
+    container_name: certgo-qdrant
+    restart: always
+    ports:
+      - "6333:6333" # gRPC 포트
+      - "6334:6334" # REST API 포트 (개발 시 직접 접근용)
+    volumes:
+      - ./data/qdrant:/qdrant/storage # 호스트의 ./data/qdrant 폴더에 데이터 저장
+    environment:
+      # Qdrant API 키 환경 변수 추가
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY} # Qdrant 공식 문서의 환경 변수 이름      
+    networks:
+      - certgo-network
+
+  # 4. 백엔드 서비스 (Python FastAPI)
+  certgo-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: certgo-backend
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@certgo-db:5432/${DB_NAME} # Docker 네트워크 내부 호스트명 사용
+      REDIS_URL: redis://certgo-redis:6379/0 # Docker 네트워크 내부 호스트명 사용
+      QDRANT_HOST: certgo-qdrant:6333 # Docker 네트워크 내부 호스트명 사용
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      AI_API_KEY: ${AI_API_KEY}
+    depends_on:
+      certgo-db:
+        condition: service_healthy
+      certgo-redis:
+        condition: service_started
+      certgo-qdrant:
+        condition: service_started
+    volumes:
+      - .:/app # 개발 중 코드 변경 시 자동 반영을 위한 볼륨
+      - /app/venv # 가상환경 폴더는 컨테이너에서 독립적으로 관리
+    command: gunicorn app.main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+    networks:
+      - certgo-network
+    labels: # Traefik이 이 서비스를 감지하도록 레이블 추가
+      - "traefik.enable=true"
+
+      # 단일 서비스 정의: certgo-backend 컨테이너의 8000번 포트를 'certgo-backend-service'로 정의
+      - "traefik.http.services.certgo-backend-service.loadbalancer.server.port=8000"
+
+      # 메인 API 라우터 (http://localhost/api 로 접근)
+      - "traefik.http.routers.backend.rule=Host(`localhost`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.backend.entrypoints=web"
+      - "traefik.http.routers.backend.service=certgo-backend-service" # 위에서 정의한 서비스 이름 참조
+
+      # FastAPI 자동 문서화 라우터 (http://localhost/docs, http://localhost/redoc, http://localhost/openapi.json 로 접근)
+      - "traefik.http.routers.backend-docs.rule=Host(`localhost`) && PathPrefix(`/docs`, `/redoc`, `/openapi.json`)"
+      - "traefik.http.routers.backend-docs.entrypoints=web"
+      - "traefik.http.routers.backend-docs.service=certgo-backend-service" # 위에서 정의한 서비스 이름 참조
+
+
+  # 5. 백엔드 Celery Worker 서비스
+  certgo-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: certgo-worker
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@certgo-db:5432/${DB_NAME}
+      REDIS_URL: redis://certgo-redis:6379/0
+      QDRANT_HOST: certgo-qdrant:6333
+      AI_API_KEY: ${AI_API_KEY}
+    command: celery -A app.tasks.celery_worker worker -l info
+    depends_on:
+      certgo-db:
+        condition: service_healthy
+      certgo-redis:
+        condition: service_started
+      certgo-qdrant:
+        condition: service_started
+    volumes:
+      - .:/app
+      - /app/venv
+    networks:
+      - certgo-network
+
+  # 6. Traefik 게이트웨이 서비스 (이전과 동일)
+  certgo-traefik:
+    image: traefik:v2.10
+    container_name: certgo-traefik
+    restart: always
+    command:
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80  
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # - ./traefik-certs:/letsencrypt # SSL 사용 시 이 볼륨 활성화
+    networks:
+      - certgo-network
+
+# 더 이상 명명된 볼륨을 정의할 필요가 없습니다.
+# volumes:
+#   certgo-db_data:
+#   certgo-redis_data:
+#   certgo-qdrant_data:
+
+# Docker 네트워크 정의
+networks:
+  certgo-network:
+    external: true
